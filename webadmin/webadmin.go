@@ -137,6 +137,10 @@ func WebadminStartAsync(sharedSettings *dms.Server) error {
 		c.Redirect(http.StatusFound, "/webui")
 	})
 
+	router.GET("/favicon.ico", func(c *gin.Context) {
+		c.Redirect(http.StatusFound, "/webui/favicon.ico")
+	})
+
 	router.GET("/ping", func(c *gin.Context) {
 		c.JSON(200, gin.H{
 			"message": "pong",
