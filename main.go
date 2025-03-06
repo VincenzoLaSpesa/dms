@@ -312,6 +312,7 @@ func mainErr() error {
 		os.Exit(0)
 	}
 
+	config.Path, _ = filepath.Abs(config.Path)
 	logger.Printf("device icon sizes are %q", config.DeviceIconSizes)
 	logger.Printf("allowed ip nets are %q", config.AllowedIpNets)
 	logger.Printf("blacklisted nets are %q", config.BlacklistedIpNets)

@@ -55,7 +55,13 @@ func findAssetsFolder() (string, error) {
 		path = filepath.Join(path, "webassets")
 		return path, nil
 	}
+	path = os.Getenv("webassets")
+	good, _ = fileOrFolderExists("./webassets")
 
+	if len(path) > 0 && good {
+
+		return filepath.Abs(path)
+	}
 	return "", fs.ErrInvalid
 }
 
@@ -122,6 +128,8 @@ func WebadminStartAsync(sharedSettings *dms.Server) error {
 		fmt.Println("Unable to find the static folder for the web server.")
 		return err
 	}
+
+	fmt.Println("Serving static files from " + assetFolder)
 
 	router.Static("/webui", assetFolder)
 
