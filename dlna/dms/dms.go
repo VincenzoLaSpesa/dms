@@ -830,6 +830,24 @@ func (server *Server) contentDirectoryEventSubHandler(w http.ResponseWriter, r *
 }
 
 func (server *Server) serveDynamicStream(w http.ResponseWriter, r *http.Request, metadataPath string) error {
+
+	clientIp, _, _ := net.SplitHostPort(r.RemoteAddr)
+	found := isIpAllowed(net.ParseIP(clientIp), server.AllowedIpNets, server.BlacklistedIpNets)
+
+	if !found {
+		log.Printf("not allowed client %s, %+v", clientIp, server.AllowedIpNets)
+		http.Error(w, "forbidden", http.StatusForbidden)
+		server.RefusedClients[clientIp] = true
+		delete(server.AllowedClients, clientIp)
+		e := fmt.Errorf("not allowed client %s", clientIp)
+		return e
+	} else {
+		if _, ok := server.AllowedClients[clientIp]; ok {
+			server.AllowedClients[clientIp] = ""
+		}
+		delete(server.RefusedClients, clientIp)
+	}
+
 	dmsMediaItem, err := readDynamicStream(metadataPath)
 	if err != nil {
 		return err
