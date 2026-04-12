@@ -218,6 +218,11 @@ func WebadminStartAsync(sharedSettings *dms.Server) error {
 		})
 	})
 
-	router.Run() // listen and serve on 0.0.0.0:8080
+	port := os.Getenv("webadminport")
+	if port == "" {
+		port = "8080"
+	}
+
+	router.Run(":" + port)
 	return nil
 }
