@@ -1,0 +1,228 @@
+package webadmin
+
+import (
+	"crypto/rand"
+	"encoding/base64"
+	"errors"
+	"fmt"
+	"io/fs"
+	"net"
+	"net/http"
+	"os"
+	"path/filepath"
+
+	"github.com/anacrolix/dms/dlna/dms"
+	"github.com/gin-gonic/gin"
+)
+
+// auth maybe? https://withcodeexample.com/chapter-7-authentication-and-authorization-in-gin/
+
+func getExecutableFolder() (string, error) {
+	exePath, err := os.Executable()
+	if err != nil {
+		fmt.Println("Error:", err)
+		return "", err
+	}
+
+	exePath, err = filepath.EvalSymlinks(exePath)
+	if err != nil {
+		fmt.Println("Error:", err)
+		return "", err
+	}
+
+	exeDir := filepath.Dir(exePath)
+	return exeDir, nil
+}
+
+func fileOrFolderExists(path string) (bool, error) {
+	_, err := os.Stat(path)
+	if err == nil {
+		return true, nil
+	}
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
+	return false, err
+}
+
+func findAssetsFolder() (string, error) {
+	good, _ := fileOrFolderExists("./webassets")
+	if good {
+		return filepath.Abs("./webassets")
+	}
+	path, err := getExecutableFolder()
+	if err == nil {
+		path = filepath.Join(path, "webassets")
+		return path, nil
+	}
+	path = os.Getenv("webassets")
+	good, _ = fileOrFolderExists("./webassets")
+
+	if len(path) > 0 && good {
+
+		return filepath.Abs(path)
+	}
+	return "", fs.ErrInvalid
+}
+
+func randomPassword() string {
+	length := 32
+	randomArray := make([]byte, length)
+	rand.Read(randomArray)
+
+	data := base64.StdEncoding.EncodeToString(randomArray)
+	return data[1:8]
+}
+
+func removeIpIfPresent(iPNet []*net.IPNet, s_ip string) ([]*net.IPNet, int) {
+	hit := 0
+	ip := net.ParseIP(s_ip)
+
+	if ip == nil {
+		return iPNet, -1
+	}
+
+	for i, ipnet := range iPNet {
+		if ipnet.IP.Equal(ip) {
+			hit = hit + 1
+			iPNet = append(iPNet[:i], iPNet[i+1:]...)
+		}
+	}
+
+	return iPNet, hit
+}
+
+func deleterHelper(c *gin.Context, iPNet []*net.IPNet, s_ip string) ([]*net.IPNet, int) {
+	iPNet, nhit := removeIpIfPresent(iPNet, s_ip)
+
+	if nhit == 0 {
+		c.JSON(404, gin.H{
+			"message": "Not found",
+		})
+	} else if nhit < 0 {
+		c.JSON(400, gin.H{
+			"message": "The ip is not valid",
+		})
+	} else {
+		c.JSON(200, gin.H{
+			"message": "The element was removed",
+			"count":   nhit,
+		})
+
+	}
+	return iPNet, nhit
+}
+
+func WebadminStartAsync(sharedSettings *dms.Server) error {
+
+	if len(sharedSettings.AdminPassword) == 0 {
+		sharedSettings.AdminPassword = randomPassword()
+		fmt.Printf("Password was set to %s ", sharedSettings.AdminPassword)
+	}
+
+	router := gin.Default()
+
+	assetFolder, err := findAssetsFolder()
+
+	if err != nil {
+		fmt.Println("Unable to find the static folder for the web server.")
+		return err
+	}
+
+	fmt.Println("Serving static files from " + assetFolder)
+
+	router.Static("/webui", assetFolder)
+
+	router.GET("/", func(c *gin.Context) {
+		c.Redirect(http.StatusFound, "/webui")
+	})
+
+	router.GET("/favicon.ico", func(c *gin.Context) {
+		c.Redirect(http.StatusFound, "/webui/favicon.ico")
+	})
+
+	router.GET("/ping", func(c *gin.Context) {
+		c.JSON(200, gin.H{
+			"message": "pong",
+		})
+	})
+
+	router.GET("/blacklist", func(c *gin.Context) {
+		c.JSON(200, sharedSettings.BlacklistedIpNets)
+	})
+
+	router.GET("/whitelist", func(c *gin.Context) {
+		c.JSON(200, sharedSettings.AllowedIpNets)
+	})
+
+	router.GET("/refused", func(c *gin.Context) {
+		c.JSON(200, sharedSettings.RefusedClients)
+	})
+
+	router.GET("/status", func(c *gin.Context) {
+		c.JSON(200, gin.H{
+			"allowed":   sharedSettings.AllowedClients,
+			"blacklist": sharedSettings.BlacklistedIpNets,
+			"refused":   sharedSettings.RefusedClients,
+			"whitelist": sharedSettings.AllowedIpNets,
+		})
+	})
+
+	router.DELETE("/blacklist/:id", func(c *gin.Context) {
+		sharedSettings.BlacklistedIpNets, _ = deleterHelper(c, sharedSettings.BlacklistedIpNets, c.Param("id"))
+	})
+
+	router.DELETE("/whitelist/:id", func(c *gin.Context) {
+		sharedSettings.BlacklistedIpNets, _ = deleterHelper(c, sharedSettings.AllowedIpNets, c.Param("id"))
+	})
+
+	router.PUT("/blacklist/:id", func(c *gin.Context) {
+		xx, x := removeIpIfPresent(sharedSettings.AllowedIpNets, c.Param("id"))
+		sharedSettings.AllowedIpNets = xx
+
+		if x < 0 {
+			c.JSON(400, gin.H{
+				"message": "The ip is not valid",
+			})
+			return
+		}
+
+		var item net.IPNet
+		item.IP = net.ParseIP(c.Param("id"))
+		item.Mask = net.IPv4Mask(255, 255, 255, 255)
+		sharedSettings.BlacklistedIpNets = append(sharedSettings.BlacklistedIpNets, &item)
+
+		c.JSON(200, gin.H{
+			"message": "Ok",
+		})
+	})
+
+	router.PUT("/whitelist/:id", func(c *gin.Context) {
+		xx, x := removeIpIfPresent(sharedSettings.BlacklistedIpNets, c.Param("id"))
+		sharedSettings.BlacklistedIpNets = xx
+
+		if x < 0 {
+			c.JSON(400, gin.H{
+				"message": "The ip is not valid",
+			})
+			return
+		}
+
+		var item net.IPNet
+		item.IP = net.ParseIP(c.Param("id"))
+		item.Mask = net.IPv4Mask(255, 255, 255, 255)
+		sharedSettings.AllowedIpNets = append(sharedSettings.AllowedIpNets, &item)
+
+		c.JSON(200, gin.H{
+			"message": "Ok",
+		})
+	})
+
+	port := os.Getenv("webadminport")
+	if port == "" {
+		port = "8080"
+	}
+
+	router.Run(":" + port)
+	return nil
+}

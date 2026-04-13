@@ -27,6 +27,7 @@ import (
 
 	"github.com/anacrolix/dms/dlna/dms"
 	"github.com/anacrolix/dms/rrcache"
+	"github.com/anacrolix/dms/webadmin"
 )
 
 //go:embed "data/VGC Sonic.png"
@@ -51,6 +52,7 @@ type dmsConfig struct {
 	IgnorePaths         []string
 	AllowedIps          string       // Comma-separated IPs/CIDRs for JSON config
 	AllowedIpNets       []*net.IPNet `json:"-"` // Parsed IP networks, not directly from JSON
+	BlacklistedIpNets   []*net.IPNet
 	AllowDynamicStreams bool
 	TranscodeLogPattern string
 }
@@ -139,6 +141,7 @@ func mainErr() error {
 	configFilePath := flag.String("config", "", "json configuration file")
 	generateConfig := flag.Bool("generateConfig", false, "dump the current configuration to json in the stdout and exit")
 	allowedIps := flag.String("allowedIps", "", "allowed ip of clients, separated by comma")
+	blacklistedIps := flag.String("blacklistedIps", "", "blocked ip of clients, separated by comma")
 	forceTranscodeTo := flag.String("forceTranscodeTo", config.ForceTranscodeTo, "force transcoding to certain format, supported: 'chromecast', 'vp8', 'web'")
 	transcodeLogPattern := flag.String("transcodeLogPattern", "", "pattern where to write transcode logs to. The [tsname] placeholder is replaced with the name of the item currently being played. The default is $HOME/.dms/log/[tsname]")
 	flag.BoolVar(&config.NoTranscode, "noTranscode", false, "disable transcoding")
@@ -172,6 +175,12 @@ func mainErr() error {
 	config.IgnorePaths = strings.Split(*ignorePaths, ",")
 	config.TranscodeLogPattern = *transcodeLogPattern
 
+	if len(*blacklistedIps) > 0 {
+		config.BlacklistedIpNets = makeIpNets(*blacklistedIps) // that function is made for whitelist, if it's empty it will put the 0.0.0.0
+	} else {
+		config.BlacklistedIpNets = make([]*net.IPNet, 0)
+	}
+
 	if config.TranscodeLogPattern == "" {
 		u, err := user.Current()
 		if err != nil {
@@ -200,6 +209,8 @@ func mainErr() error {
 	logger.Info("device icon sizes", "sizes", config.DeviceIconSizes)
 	logger.Info("allowed ip nets", "nets", config.AllowedIpNets)
 	logger.Info("serving folder", "path", config.Path)
+	logger.Info("blacklisted nets are %q", config.BlacklistedIpNets)
+
 	if config.AllowDynamicStreams {
 		logger.Info("dynamic streams ARE allowed")
 	}
@@ -306,6 +317,9 @@ func mainErr() error {
 		IgnoreUnreadable:    config.IgnoreUnreadable,
 		IgnorePaths:         config.IgnorePaths,
 		AllowedIpNets:       config.AllowedIpNets,
+		BlacklistedIpNets:   config.BlacklistedIpNets,
+		RefusedClients:      make(map[string]bool),
+		AllowedClients:      make(map[string]string),
 	}
 	if err := dmsServer.Init(); err != nil {
 		slog.Error("error initing dms server", "error", err)
@@ -316,6 +330,10 @@ func mainErr() error {
 			slog.Error("error running dms server", "error", err)
 			os.Exit(1)
 		}
+	}()
+
+	go func() {
+		webadmin.WebadminStartAsync(dmsServer)
 	}()
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
