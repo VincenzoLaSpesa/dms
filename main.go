@@ -10,7 +10,6 @@ import (
 	"image/png"
 	"io"
 	"io/ioutil"
-	"log"
 	"log/slog"
 	"net"
 	"os"
@@ -224,7 +223,7 @@ func mainErr() error {
 	}
 
 	dmsServer := &dms.Server{
-		Logger: log.Default.WithNames("main"),
+		Logger: logger,
 		Interfaces: func(ifName string) (ifs []net.Interface) {
 			var err error
 			if ifName == "" {

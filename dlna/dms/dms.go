@@ -835,7 +835,7 @@ func (server *Server) serveDynamicStream(w http.ResponseWriter, r *http.Request,
 	found := isIpAllowed(net.ParseIP(clientIp), server.AllowedIpNets, server.BlacklistedIpNets)
 
 	if !found {
-		log.Printf("not allowed client %s, %+v", clientIp, server.AllowedIpNets)
+		slog.Info("not allowed client %s, %+v", clientIp, server.AllowedIpNets)
 		http.Error(w, "forbidden", http.StatusForbidden)
 		server.RefusedClients[clientIp] = true
 		delete(server.AllowedClients, clientIp)
